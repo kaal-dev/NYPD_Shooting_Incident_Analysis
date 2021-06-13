@@ -1,0 +1,372 @@
+---
+title: "NYPD Shooting Incident Data 2006 - 2020 "
+author: "John Doe"
+date: "16/5/2021"
+output:
+  html_document: 
+    toc: true 
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false 
+      
+    number_sections: true
+    df_print: paged
+---
+
+``` {r data_import, message=FALSE, warning=FALSE,include = TRUE}
+library(tidyverse)
+library(readr)
+
+nypd_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+```
+# NYPD Police Shooting Dataset
+
+List of every shooting incident that occurred in NYC going back to 2006 through 
+the end of the previous calendar year.
+
+The dataset represents every shooting incident that occurred in NYC going back 
+to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a 
+shooting incident in NYC and includes information about the event, the location
+and time of occurrence. In addition, information related to suspect and victim
+demographics is also included. 
+
+Publisher: data.cityofnewyork.us
+Metadata Updated: November 10, 2020
+Downloaded: May 15, 2020
+
+## Goal of this Analyis
+
+This analysis aims to understand better the victims of gun violence in NYC and which groups are most affected. For that purpose, this report shows which 
+district, time of the year, time of the day, gender, and age group is affected 
+most by reported/detected gun violence in NYC between 2006 and 2020. 
+
+## Description of the Data
+
+The Dataset at hand has 23.568 rows and 19 columns. You can find more summary information in the following code block. For more information regarding the 
+column description,  please  consult 'https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8'
+
+```{r summary, include=TRUE}
+summary(nypd_data)
+```
+Since we're focusing on the victims, the data regarding coordinates ad exact location can be deleted. Information about the area is additionally found in 
+BORO, which gives information about the borough where the shooting incident occurred. This is sufficient detail for the scope of this analysis.
+
+```{r Delete Coloumns,include=TRUE}
+nypd_data<- subset(nypd_data, select = -c(JURISDICTION_CODE,PRECINCT,LOCATION_DESC,X_COORD_CD,Y_COORD_CD,Latitude,Longitude,Lon_Lat))
+
+
+```
+
+For a better analysis, OCCUR_DATE  is converted via as.Date to the class Date.
+
+```{r Data and NAs, include=TRUE}
+nypd_data <- nypd_data %>%
+  mutate(OCCUR_DATE = as.Date(OCCUR_DATE, "%m/%d/%Y"))
+
+colSums(is.na(nypd_data))
+```   
+For further analysis, we inspect NA Values.  NA values are only relevant for 
+data regarding the perpetrator. Since the data makes up roughly a third, it 
+creates the question of how to deal with these values.
+
+One could fill in the missing data with averages. But this could have a 
+significant impact on the result since the missing values make up around 1/3 of
+the data. 
+
+One could drop the rows, but the information in other columns would be deleted 
+as well. 
+
+Since we're focusing on victims, we're dropping the perpetrator columns, even though it would be interesting to figure out why such a significant number of perpetrators couldn't be identified. 
+
+```{r remove PERP coloumns, include=TRUE}
+nypd_data<- subset(nypd_data, select = -c(PERP_AGE_GROUP, PERP_SEX,PERP_RACE))
+```
+
+We're creating new columns YEAR and MONTH that only store the year and the month
+to analyze the dates in a more meaningful way. 
+
+
+```{r create columns, message=FALSE, warning=FALSE,include=TRUE}
+library(hms)
+nypd_data$YEAR <- format(nypd_data$OCCUR_DATE, format = "%Y")
+nypd_data$MONTH <- format(nypd_data$OCCUR_DATE, format = "%m")
+nypd_data$MONTH <- as.numeric(as.character(nypd_data$MONTH))
+
+nypd_data<- nypd_data %>%
+  mutate(SEASON = case_when(MONTH <  3 ~ "Winter",
+                            MONTH >  2 & MONTH < 6 ~ "Spring",
+                            MONTH >  5 & MONTH < 9 ~ "Summer",
+                            MONTH >  8 & MONTH < 12 ~ "Autumn",
+                            MONTH == 12 ~ "Winter"
+                            ))
+```
+
+To get a better understanding of the daytimes in OCCUR_TIME we're labeling different time blocks with "Morning", "Afternoon", "Evening" and "Night" and 
+creating a new column DAYTIME. Afterwards we're dropping the old OCCUR_DATE and OCCUr_TIME columns
+
+
+```{r create columns2, message=FALSE, warning=FALSE,include=TRUE}
+nypd_data<- nypd_data %>%
+  mutate(DAYTIME = case_when(OCCUR_TIME < hms(00,00,05) ~ "Night",
+                             OCCUR_TIME > hms(00,00,05) & OCCUR_TIME < hms(00,00,12) ~ "Morning",
+                             OCCUR_TIME > hms(00,00,12) & OCCUR_TIME < hms(00,00,17) ~ "Afternoon",
+                             OCCUR_TIME > hms(00,00,17) & OCCUR_TIME < hms(00,00,21) ~ "Evening",
+                             OCCUR_TIME > hms(00,00,21)  ~ "Night",
+                        ))
+nypd_data <- subset(nypd_data, select = -c(OCCUR_DATE, OCCUR_TIME))
+
+nypd_data_summary <- nypd_data %>%
+  group_by(YEAR) %>%
+  summarise(Total_Shootings = length(STATISTICAL_MURDER_FLAG),
+         Fatal_Shootings = sum(STATISTICAL_MURDER_FLAG == TRUE),
+         Non_Fatal_shootings = sum(STATISTICAL_MURDER_FLAG == FALSE))
+
+nypd_data_summary2 <- nypd_data %>%
+  group_by(YEAR, MONTH, BORO) %>%
+  summarise(Total_Shootings = length(STATISTICAL_MURDER_FLAG),
+         Fatal_Shootings = sum(STATISTICAL_MURDER_FLAG == TRUE),
+         Non_Fatal_shootings = sum(STATISTICAL_MURDER_FLAG == FALSE),
+         Male_victims = sum(VIC_SEX == "M"),
+         Female_victims = sum(VIC_SEX == "F"))
+
+nypd_data_summary2<- subset(nypd_data_summary2, select = -c(YEAR, MONTH))
+```
+For the analysis of the dataset the data will be ordered, so that plots 
+for a first analysis can be created. 
+
+The aim is to analyse how victims of shootings are distributed among gender. Furthermore it is interesting to know, how many of the shootings incidents are classified as murder. It is also of interesting in which destination are the 
+most shootings, is there a time of the year or day where more shootings occur 
+and which age group will be affected by shootings the most. 
+
+```{r create columns3, message=FALSE, warning=FALSE,include=TRUE}
+
+# Victims by Year
+nypd_data_year_victims <- nypd_data %>%
+  arrange(YEAR) %>%
+  count(YEAR,VIC_SEX,sort =FALSE)
+
+# Victims --> Shootings Death
+nypd_data_shot_death <- nypd_data %>%
+  group_by(YEAR) %>%
+  count(STATISTICAL_MURDER_FLAG)
+
+# Top 5 Destinations in 2020
+nypd_top_destination <- nypd_data %>%
+  filter(YEAR == 2020)
+  
+# Top Time of the year
+nypd_top_season <- nypd_data %>%
+  group_by(SEASON)
+  
+# Top Daytime
+nypd_top_Daytime <-nypd_data %>%
+  filter(DAYTIME == c("Afternoon", "Evening", "Morning", "Night"))
+  
+```
+
+# Plots
+
+## Development of Shootings
+
+First, we look at how often shootings are classified as murders. We see that the numbers of shootings and murders are connected. The more shootings, the more murders. Furthermore, we see that the number of shootings was declining strongly. 2020, the trend was changing, and the numbers of shootings were increasing dramatically.
+
+```{r plot1, include=TRUE}
+library(ggplot2)
+
+# Shootings / Deaths
+ggplot (nypd_data_shot_death, aes(x=YEAR, y=n, color=STATISTICAL_MURDER_FLAG, group=STATISTICAL_MURDER_FLAG))+
+  geom_point()+
+  geom_line()+
+  ggtitle("Development of Shootings in NYC\n2006 - 2020") +
+  ylab("Count") + 
+  labs(color = "Classified as Murder") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  
+```
+
+## Age Groups
+
+Next, we want to see if a specific age group is most often affected by shootings. You can see that this is true for the 18-24 and 25-44 olds in the plot. Unfortunately, the range is pretty big. For further analysis, you would need the age structure in NYC to better understand how much of the population the age group represents.  
+
+```{r plot2, include=TRUE}
+
+# Age Group
+ggplot(nypd_data, aes(VIC_AGE_GROUP))+
+  geom_bar(fill = "turquoise")+
+  ggtitle("Age Groups of Shooting Victims\n2006 - 2020")+
+  xlab("Age Group")+
+  ylab("Count")
+```
+
+## Boroughs 
+
+You can identify the two boroughs where most shootings occur at the different boroughs. These boroughs are Bronx and Brooklyn. For further analysis, we would need the census data to compare population density, age distribution, household income, level of education, etc., with the other boroughs. 
+
+```{r plot3, include=TRUE}
+# Top Districts in 2020
+ggplot (nypd_top_destination, aes(x=BORO))+
+  geom_bar(fill = "turquoise")+
+  ggtitle("Shootings by Boroughs\n2020")+
+  xlab("Borough")+
+  ylab("Count")
+```
+
+## Time of the Year
+
+We can see a spike in summer and fewer shootings in winter. The reasons for that would need further data about the individuals' daily activities and moving patterns.
+
+```{r plot4, include=TRUE}
+# Top Time of the year
+ggplot (nypd_top_season, aes(x=SEASON))+
+  geom_bar(fill = "turquoise")+
+  ggtitle("Shootings by Season\n2006 - 2020")+
+  xlab("Season")+
+  ylab("Count")
+```
+
+## Daytime 
+
+There is a clear indication that most shootings occur during the night and the least during the morning. This makes intuitive sense but would require further analysis. 
+
+
+```{r plot5, include=TRUE}
+
+# Top Daytime
+ggplot(nypd_top_Daytime , aes(x=DAYTIME))+
+  geom_bar(fill = "turquoise")+
+  ggtitle("Shootings by Daytime\n2006 - 2020")+
+  xlab("Daytime")+
+  ylab("Count")
+```
+
+## Victim Gender 
+
+By looking at the victims' gender, you can see that more men are among the victims. This would need further research and information from census and sociologist
+
+```{r plot6, include=TRUE}
+# victims Male, Female, U
+ggplot (nypd_data_year_victims, aes(x=YEAR, y=n, color=VIC_SEX, group=VIC_SEX))+
+  geom_point()+
+  geom_line()+
+  ggtitle("Shooting Victims Gender\n2006 - 2020") +
+  ylab("Count") + 
+  labs(color = "Gender") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+# Plots
+
+After getting an idea about our data we will perform some linear regressions. 
+
+## Linear Model 1 - Total Shootings / Fatal Shootings
+
+The regression shows that by receiving information about the number of shootings in a given period, we can make reasonable assumptions about the number of fatal shootings. Multiple R-Squared over 0.75 and a p-value below 0.05 suggest that the model has a good fit for our dataset. 
+
+```{r linear model 1, include=TRUE}
+
+# First Model - Numerical / Numerical 
+mod <- lm(Fatal_Shootings ~ Total_Shootings, data=nypd_data_summary)
+
+summary(mod)
+
+lm_model_nypda_data <-  nypd_data_summary %>% 
+  mutate(pred_fatal_shootings = predict(mod))
+```
+
+```{r plot linear model, include=TRUE}
+
+lm_model_nypda_data %>% ggplot() + 
+  geom_point(aes(x= Total_Shootings, y= Fatal_Shootings), color = "turquoise")+
+  geom_point(aes(x= Total_Shootings, y= pred_fatal_shootings), color = "red")+
+  ggtitle("Linear Model Total Shootings / Fatal Shootings") +
+  ylab("Fatal Shootings") + 
+  xlab("Total Shootings")
+```
+
+## Linear Model 2 - Total Shootings / Male Victims
+
+The regression shows that by receiving information about the number of shootings in a given period, we can make reasonable assumptions about the number of male victoms. Multiple R-Squared over 0.75 and a p-value below 0.05 suggest that the model has a good fit for our dataset.
+
+```{r linear model 2, include=TRUE}
+
+# Second Model - Numerical/ Numerical 
+
+mod2 <- lm(Male_victims ~ Total_Shootings, data=nypd_data_summary2)
+
+summary(mod2)
+
+lm_model_nypda_data_two <-  nypd_data_summary2 %>% 
+  mutate(pred_male_vic = predict(mod2))
+```
+```{r plot linear model2, include=TRUE}
+# refers to shootings per month
+
+lm_model_nypda_data_two %>% ggplot() + 
+  geom_point(aes(x= Total_Shootings, y= Male_victims), color = "turquoise")+
+  geom_point(aes(x= Total_Shootings, y= pred_male_vic), color = "red")+
+  ggtitle("Linear Model Total Shootings / Male Victims") +
+  ylab("Male Victims") + 
+  xlab("Total Shootings")
+```
+
+## Linear Model 3  -  Boroughs / Total Shootings
+
+The regression shows that by receiving information about the borough we can make assumptions about the number of shootings. Multiple R-Squared below 0.75 suggest that the model has room for improvement. Other factors from different data sources could improve the model. 
+
+
+```{r linear model 3, include=TRUE}
+# Third Model - Categorical / Numerical
+
+mod3 <- lm(Total_Shootings ~ factor(BORO), data=nypd_data_summary2)
+
+summary(mod3)
+
+lm_model_nypda_data_three <-  nypd_data_summary2 %>% 
+  mutate(pred_to_shoot = predict(mod3))
+
+```
+```{r plot linear mode3, include=TRUE}
+
+# refers to shootings per month
+
+lm_model_nypda_data_three %>% ggplot() + 
+  geom_point(aes(x= BORO, y= Total_Shootings), color = "turquoise")+
+  geom_point(aes(x= BORO, y= pred_to_shoot), color = "red")+
+  ggtitle(" Linear Model Boroughs / Total Shootings") +
+  ylab("Total Shootings") + 
+  xlab("Boroughs")
+
+```
+
+# Conclusion
+
+By analyzing the data, we could figure out that the number of shootings rose
+in 2020 after being in decline since 2006.  
+
+We could see that the age groups most often affected by shootings are the 18-24 and 25-44 olds.  
+
+Furthermore, we could identify the two boroughs where most shootings occur. 
+These boroughs are Bronx and Brooklyn. We can see a spike of shootings in summer and fewer shootings in winter, while the evening is the time of the day where most shootings occur. 
+
+By looking at the victims' gender, we could figure out that more men are among the victims than women.
+
+We could figure out that total shootings are a good estimator for fatal 
+shootings and male victims by doing regression analysis. At the same time, the borough is not such a robust estimator for the total amount of shootings.
+
+
+# Bias
+
+Typical source for bias could be confirmation bias. This bias occurs when the person performing the data analysis wants to prove a predetermined assumption.
+To mitigate that risk, I followed a transparent process and was making conclusions only on the data in the existing data source. 
+
+Furthermore, there could have been a bias while collecting the data. I clearly showed where I got the data from and how I was performing the analysis. Every person can follow each step of my activities and evaluate the source. Of course, I can not determine how the data was collected by the NYPD and how biased the persons collecting the data have been.
+ 
+
+
+
+```{r info, include=TRUE}
+sessionInfo()
+```
+
